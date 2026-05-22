@@ -1,0 +1,435 @@
+"""Calibration optimizer — 한 시즌 β/φ/γ_report fit.
+
+scipy.optimize.minimize 래퍼:
+- Nelder-Mead (gradient-free, robust)
+- L-BFGS-B (bounds 지원, faster but local)
+
+결과: CalibrationResult dataclass + JSON save/load.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+from scipy.optimize import minimize
+
+from kt_epimodel.calibration.ili_target import (
+    load_ili_target,
+    load_ili_target_by_age,
+)
+from kt_epimodel.calibration.loss import (
+    make_loss_function,
+    make_loss_function_by_age,
+)
+from kt_epimodel.calibration.param_vector import (
+    get_bounds_vector,
+    initial_guess,
+    vector_to_params,
+)
+from kt_epimodel.calibration.simple_model import (
+    build_aggregated_inputs,
+    estimate_initial_infected_from_ili,
+)
+from kt_epimodel.model.parameters import (
+    CalibrationParameters,
+    ModelParameters,
+)
+
+VALID_METHODS = ("Nelder-Mead", "L-BFGS-B")
+
+
+@dataclass
+class CalibrationResult:
+    """Calibration 결과."""
+    season: str
+    method: str
+    success: bool
+    nll: float
+    nll_initial: float
+    calibration: CalibrationParameters
+    seasonality_amp: float
+    seasonality_base: float
+    seasonality_sigma: float
+    seasonality_mode: str
+    vector: np.ndarray
+    n_evaluations: int
+    elapsed_seconds: float
+    message: str
+    seed_total: float
+    initial_immunity: float
+    initial_vaccinated_fraction: float
+    first_peak_only: bool = False
+    first_peak_end_week: int = 26
+    use_data_seed: bool = False
+    seed_by_age: list[float] | None = None
+    gamma_report_assumed: float = 1.0
+
+
+def optimize_calibration(
+    season: str,
+    base_params: ModelParameters | None = None,
+    seed_total: float = 100.0,
+    initial_immunity: float = 0.0,
+    initial_vaccinated_fraction: float = 0.0,
+    method: str = "Nelder-Mead",
+    initial_vec: np.ndarray | None = None,
+    max_iterations: int = 2000,
+    verbose: bool = True,
+    t_span: tuple[float, float] = (0.0, 364.0),
+    first_peak_only: bool = False,
+    first_peak_end_week: int = 26,
+) -> CalibrationResult:
+    """한 시즌 calibration 수행."""
+    if method not in VALID_METHODS:
+        raise ValueError(f"method must be in {VALID_METHODS}, got {method!r}")
+    if base_params is None:
+        base_params = ModelParameters()
+
+    target = load_ili_target(
+        season,
+        first_peak_only=first_peak_only,
+        first_peak_end_week=first_peak_end_week,
+    )
+    inputs = build_aggregated_inputs()
+
+    loss_fn = make_loss_function(
+        target, inputs, base_params,
+        seed_total=seed_total,
+        initial_immunity=initial_immunity,
+        initial_vaccinated_fraction=initial_vaccinated_fraction,
+        t_span=t_span,
+        verbose=verbose,
+    )
+
+    if initial_vec is None:
+        initial_vec = initial_guess()
+    nll_initial = float(loss_fn(initial_vec))
+
+    if verbose:
+        print(f"=== Optimizing {season} with {method} ===")
+        print(f"Initial NLL: {nll_initial:.2f}")
+
+    t0 = time.perf_counter()
+    bounds = get_bounds_vector()
+    if method == "L-BFGS-B":
+        sol = minimize(
+            loss_fn, initial_vec,
+            method="L-BFGS-B", bounds=bounds,
+            options={"maxiter": max_iterations, "disp": verbose},
+        )
+    else:   # Nelder-Mead
+        sol = minimize(
+            loss_fn, initial_vec,
+            method="Nelder-Mead",
+            bounds=bounds,
+            options={
+                "maxiter": max_iterations,
+                "xatol": 1e-4, "fatol": 1e-2,
+                "disp": verbose,
+                "adaptive": True,
+            },
+        )
+    elapsed = time.perf_counter() - t0
+
+    fit_params, fit_amp, fit_base, fit_sigma = vector_to_params(sol.x)
+
+    if verbose:
+        print("\n=== Result ===")
+        print(f"  success:      {sol.success}")
+        print(f"  NLL:          {nll_initial:.2f} → {sol.fun:.2f}")
+        print(f"  evaluations:  {sol.nfev}")
+        print(f"  elapsed:      {elapsed:.1f}s")
+        print(
+            f"  fitted β:     h={fit_params.beta_h:.4f} w={fit_params.beta_w:.4f} "
+            f"s={fit_params.beta_s:.4f} o={fit_params.beta_o:.4f}"
+        )
+        print(f"  γ_report:     {fit_params.gamma_report:.4f}")
+        print(f"  amp:          {fit_amp:.4f}")
+        print(f"  base:         {fit_base:.4f}")
+        print(f"  sigma:        {fit_sigma:.2f}")
+
+    return CalibrationResult(
+        season=season,
+        method=method,
+        success=bool(sol.success),
+        nll=float(sol.fun),
+        nll_initial=nll_initial,
+        calibration=fit_params,
+        seasonality_amp=fit_amp,
+        seasonality_base=fit_base,
+        seasonality_sigma=fit_sigma,
+        seasonality_mode=base_params.disease.seasonality_mode,
+        vector=np.asarray(sol.x, dtype=np.float64),
+        n_evaluations=int(sol.nfev),
+        elapsed_seconds=elapsed,
+        message=str(sol.message),
+        seed_total=float(seed_total),
+        initial_immunity=float(initial_immunity),
+        initial_vaccinated_fraction=float(initial_vaccinated_fraction),
+        first_peak_only=bool(first_peak_only),
+        first_peak_end_week=int(first_peak_end_week),
+    )
+
+
+def optimize_calibration_by_age(
+    season: str,
+    base_params: ModelParameters | None = None,
+    seed_total: float = 100.0,
+    use_data_seed: bool = True,
+    seed_e_factor: float = 0.5,
+    gamma_report_assumed: float = 2.0,
+    initial_immunity: float = 0.3,
+    initial_vaccinated_fraction: float = 0.0,
+    method: str = "Nelder-Mead",
+    initial_vec: np.ndarray | None = None,
+    max_iterations: int = 2000,
+    verbose: bool = True,
+    t_span: tuple[float, float] = (0.0, 364.0),
+    first_peak_only: bool = True,
+    first_peak_end_week: int = 26,
+) -> CalibrationResult:
+    """7 연령 그룹 동시 fit calibration.
+
+    NLL = Σ_{age_group} Poisson NLL_{age_group}.
+    use_data_seed=True (default): 시즌 시작 ILI baseline 으로 연령별 seed 자동 추정.
+    season 필드는 '{season}_by_age' 로 기록.
+    """
+    if method not in VALID_METHODS:
+        raise ValueError(f"method must be in {VALID_METHODS}, got {method!r}")
+    if base_params is None:
+        base_params = ModelParameters()
+
+    target_by_age = load_ili_target_by_age(
+        season,
+        first_peak_only=first_peak_only,
+        first_peak_end_week=first_peak_end_week,
+    )
+    inputs = build_aggregated_inputs()
+
+    seed_by_age_arr: np.ndarray | None = None
+    if use_data_seed:
+        seed_by_age_arr = estimate_initial_infected_from_ili(
+            season, inputs["pop_15"].flatten(),
+            gamma_report_assumed=gamma_report_assumed,
+        )
+        seed_total_effective = float(seed_by_age_arr.sum())
+        if verbose:
+            print(
+                f"Estimated seed by age "
+                f"(γ_report_assumed={gamma_report_assumed}, "
+                f"total={seed_total_effective:,.0f}):"
+            )
+            for a, n in enumerate(seed_by_age_arr):
+                print(f"  age {a*5}-{a*5+4 if a<14 else 99}: {n:,.0f}")
+    else:
+        seed_total_effective = float(seed_total)
+
+    loss_fn = make_loss_function_by_age(
+        target_by_age, inputs, base_params,
+        seed_total=seed_total_effective,
+        seed_by_age=seed_by_age_arr,
+        seed_e_factor=seed_e_factor,
+        initial_immunity=initial_immunity,
+        initial_vaccinated_fraction=initial_vaccinated_fraction,
+        t_span=t_span,
+        verbose=verbose,
+    )
+
+    if initial_vec is None:
+        initial_vec = initial_guess()
+    nll_initial = float(loss_fn(initial_vec))
+
+    if verbose:
+        print(f"=== Optimizing {season} (by_age, 7 groups) with {method} ===")
+        print(f"Initial NLL: {nll_initial:.2f}")
+
+    t0 = time.perf_counter()
+    bounds = get_bounds_vector()
+    if method == "L-BFGS-B":
+        sol = minimize(
+            loss_fn, initial_vec,
+            method="L-BFGS-B", bounds=bounds,
+            options={"maxiter": max_iterations, "disp": verbose},
+        )
+    else:
+        sol = minimize(
+            loss_fn, initial_vec,
+            method="Nelder-Mead",
+            bounds=bounds,
+            options={
+                "maxiter": max_iterations,
+                "xatol": 1e-4, "fatol": 1e-2,
+                "disp": verbose, "adaptive": True,
+            },
+        )
+    elapsed = time.perf_counter() - t0
+    fit_params, fit_amp, fit_base, fit_sigma = vector_to_params(sol.x)
+
+    if verbose:
+        print("\n=== Result (by_age) ===")
+        print(f"  success:      {sol.success}")
+        print(f"  NLL:          {nll_initial:.2f} → {sol.fun:.2f}")
+        print(f"  evaluations:  {sol.nfev}")
+        print(f"  elapsed:      {elapsed:.1f}s")
+        print(
+            f"  β fit:        h={fit_params.beta_h:.4f} w={fit_params.beta_w:.4f} "
+            f"s={fit_params.beta_s:.4f} o={fit_params.beta_o:.4f}"
+        )
+        print(f"  γ_report:     {fit_params.gamma_report:.4f}")
+        print(f"  amp:          {fit_amp:.4f}")
+        print(f"  base:         {fit_base:.4f}")
+        print(f"  sigma:        {fit_sigma:.2f}")
+
+    return CalibrationResult(
+        season=f"{season}_by_age",
+        method=method,
+        success=bool(sol.success),
+        nll=float(sol.fun),
+        nll_initial=nll_initial,
+        calibration=fit_params,
+        seasonality_amp=fit_amp,
+        seasonality_base=fit_base,
+        seasonality_sigma=fit_sigma,
+        seasonality_mode=base_params.disease.seasonality_mode,
+        vector=np.asarray(sol.x, dtype=np.float64),
+        n_evaluations=int(sol.nfev),
+        elapsed_seconds=elapsed,
+        message=str(sol.message),
+        seed_total=float(seed_total_effective),
+        initial_immunity=float(initial_immunity),
+        initial_vaccinated_fraction=float(initial_vaccinated_fraction),
+        first_peak_only=bool(first_peak_only),
+        first_peak_end_week=int(first_peak_end_week),
+        use_data_seed=bool(use_data_seed),
+        seed_by_age=(seed_by_age_arr.tolist() if seed_by_age_arr is not None else None),
+        gamma_report_assumed=float(gamma_report_assumed),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Save / Load
+# ---------------------------------------------------------------------------
+
+def save_result(result: CalibrationResult, path: Path | str) -> None:
+    """JSON 저장. 부모 폴더 자동 생성."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        "season": result.season,
+        "method": result.method,
+        "success": result.success,
+        "nll": result.nll,
+        "nll_initial": result.nll_initial,
+        "vector": result.vector.tolist(),
+        "n_evaluations": result.n_evaluations,
+        "elapsed_seconds": result.elapsed_seconds,
+        "message": result.message,
+        "seed_total": result.seed_total,
+        "initial_immunity": result.initial_immunity,
+        "initial_vaccinated_fraction": result.initial_vaccinated_fraction,
+        "seasonality_amp": result.seasonality_amp,
+        "seasonality_base": result.seasonality_base,
+        "seasonality_sigma": result.seasonality_sigma,
+        "seasonality_mode": result.seasonality_mode,
+        "first_peak_only": result.first_peak_only,
+        "first_peak_end_week": result.first_peak_end_week,
+        "use_data_seed": result.use_data_seed,
+        "seed_by_age": result.seed_by_age,
+        "gamma_report_assumed": result.gamma_report_assumed,
+        "calibration": {
+            "beta_h": result.calibration.beta_h,
+            "beta_w": result.calibration.beta_w,
+            "beta_s": result.calibration.beta_s,
+            "beta_o": result.calibration.beta_o,
+            "phi": result.calibration.phi.tolist(),
+            "gamma_report": result.calibration.gamma_report,
+        },
+    }
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def load_result(path: Path | str) -> CalibrationResult:
+    """JSON 로드."""
+    with open(path) as f:
+        data = json.load(f)
+    cal = CalibrationParameters(
+        beta_h=data["calibration"]["beta_h"],
+        beta_w=data["calibration"]["beta_w"],
+        beta_s=data["calibration"]["beta_s"],
+        beta_o=data["calibration"]["beta_o"],
+        phi=np.asarray(data["calibration"]["phi"], dtype=np.float64),
+        gamma_report=data["calibration"]["gamma_report"],
+    )
+    return CalibrationResult(
+        season=data["season"],
+        method=data["method"],
+        success=data["success"],
+        nll=data["nll"],
+        nll_initial=data["nll_initial"],
+        calibration=cal,
+        seasonality_amp=float(data.get("seasonality_amp", 0.0)),
+        seasonality_base=float(data.get("seasonality_base", 1.0)),
+        seasonality_sigma=float(data.get("seasonality_sigma", 40.0)),
+        seasonality_mode=str(data.get("seasonality_mode", "cosine")),
+        vector=np.asarray(data["vector"], dtype=np.float64),
+        n_evaluations=data["n_evaluations"],
+        elapsed_seconds=data["elapsed_seconds"],
+        message=data["message"],
+        seed_total=data["seed_total"],
+        initial_immunity=data["initial_immunity"],
+        initial_vaccinated_fraction=data["initial_vaccinated_fraction"],
+        first_peak_only=bool(data.get("first_peak_only", False)),
+        first_peak_end_week=int(data.get("first_peak_end_week", 26)),
+        use_data_seed=bool(data.get("use_data_seed", False)),
+        seed_by_age=(
+            list(data["seed_by_age"]) if data.get("seed_by_age") is not None else None
+        ),
+        gamma_report_assumed=float(data.get("gamma_report_assumed", 1.0)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Demo
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    print("=" * 70)
+    print("Stage 3-2-b-1: Calibration optimizer demo")
+    print("=" * 70)
+
+    print("\n--- Nelder-Mead (max 100 evals) ---")
+    result = optimize_calibration(
+        season="2022-2023",
+        method="Nelder-Mead",
+        max_iterations=100,
+        verbose=False,
+    )
+    print(f"NLL:          {result.nll_initial:.2f} → {result.nll:.2f}  "
+          f"(Δ={result.nll_initial - result.nll:.2f})")
+    print(f"evaluations:  {result.n_evaluations}")
+    print(f"elapsed:      {result.elapsed_seconds:.1f}s")
+    print(
+        f"β fit:        h={result.calibration.beta_h:.4f} "
+        f"w={result.calibration.beta_w:.4f} "
+        f"s={result.calibration.beta_s:.4f} "
+        f"o={result.calibration.beta_o:.4f}"
+    )
+    print(f"γ_report:     {result.calibration.gamma_report:.4f}")
+    print(f"amp:          {result.seasonality_amp:.4f}")
+    print(f"base:         {result.seasonality_base:.4f}")
+    print(f"sigma:        {result.seasonality_sigma:.2f}")
+    print(f"mode:         {result.seasonality_mode}")
+    print(f"φ (15 ages):  {np.array2string(result.calibration.phi, precision=2)}")
+
+    out_path = Path("outputs/calibration/2022-2023_NM_quick.json")
+    save_result(result, out_path)
+    print(f"\nSaved → {out_path}")
+
+    loaded = load_result(out_path)
+    print(f"Loaded NLL:   {loaded.nll:.2f}  (match: {loaded.nll == result.nll})")
