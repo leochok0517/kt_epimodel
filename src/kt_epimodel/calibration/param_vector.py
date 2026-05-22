@@ -33,14 +33,17 @@ N_VECTOR: int = 22
 
 @dataclass
 class ParameterBounds:
-    """파라미터별 (lower, upper) 경계."""
-    beta_h: tuple[float, float] = (0.001, 5.0)
-    beta_w: tuple[float, float] = (0.001, 5.0)
-    beta_s: tuple[float, float] = (0.001, 5.0)
-    beta_o: tuple[float, float] = (0.001, 5.0)
-    phi: tuple[float, float] = (0.1, 5.0)
-    gamma_report: tuple[float, float] = (0.01, 1.0)
-    seasonality_amp: tuple[float, float] = (0.0, 3.0)
+    """파라미터별 (lower, upper) 경계.
+
+    Tightened to avoid degenerate corner solutions (β→0, φ→0.1, γ_report→1, amp→0).
+    """
+    beta_h: tuple[float, float] = (0.01, 1.0)
+    beta_w: tuple[float, float] = (0.01, 1.0)
+    beta_s: tuple[float, float] = (0.01, 1.0)
+    beta_o: tuple[float, float] = (0.01, 1.0)
+    phi: tuple[float, float] = (0.3, 3.0)
+    gamma_report: tuple[float, float] = (0.05, 0.95)
+    seasonality_amp: tuple[float, float] = (0.1, 3.0)
     seasonality_base: tuple[float, float] = (0.0, 1.0)
     seasonality_sigma: tuple[float, float] = (15.0, 80.0)
 

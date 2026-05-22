@@ -137,6 +137,37 @@ def test_poisson_nan_safe() -> None:
     assert np.isfinite(nll)
 
 
+def test_poisson_min_rate_default_is_0_1() -> None:
+    """default min_rate = 0.1 — corner solution 방지."""
+    obs = np.array([5.0, 10.0, 20.0])
+    pred_zero = np.array([0.0, 0.0, 0.0])
+    pred_floor = np.full_like(obs, 0.1)
+    # default min_rate=0.1 → pred=0 도 0.1 로 clip → 같은 NLL
+    nll_default = poisson_log_likelihood(obs, pred_zero)
+    nll_floor = poisson_log_likelihood(obs, pred_floor)
+    assert nll_default == pytest.approx(nll_floor)
+
+
+def test_poisson_min_rate_smaller_floor() -> None:
+    """min_rate 명시적으로 작게 하면 pred=0 의 NLL 더 커짐."""
+    obs = np.array([5.0, 10.0, 20.0])
+    pred_zero = np.array([0.0, 0.0, 0.0])
+    nll_floor_01 = poisson_log_likelihood(obs, pred_zero, min_rate=0.1)
+    nll_floor_tiny = poisson_log_likelihood(obs, pred_zero, min_rate=1e-6)
+    # min_rate=1e-6 → -obs·log(1e-6) = +13.8·obs → 큰 NLL
+    assert nll_floor_tiny > nll_floor_01
+
+
+def test_poisson_min_rate_penalizes_corner_solution() -> None:
+    """default min_rate=0.1 에서 zero pred 가 합리 pred 보다 NLL 큼."""
+    obs = np.array([5.0, 10.0, 20.0, 50.0, 30.0, 10.0])
+    pred_zero = np.full_like(obs, 0.001)        # corner solution
+    pred_good = np.array([4.0, 9.0, 22.0, 48.0, 28.0, 11.0])
+    nll_zero = poisson_log_likelihood(obs, pred_zero)
+    nll_good = poisson_log_likelihood(obs, pred_good)
+    assert nll_zero > nll_good
+
+
 def test_poisson_shape_mismatch_raises() -> None:
     with pytest.raises(ValueError):
         poisson_log_likelihood(np.zeros(5), np.zeros(4))

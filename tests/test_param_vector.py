@@ -170,9 +170,34 @@ def test_bounds_default() -> None:
 
 
 def test_bounds_custom() -> None:
-    custom = ParameterBounds(beta_h=(0.01, 1.0))
+    custom = ParameterBounds(beta_h=(0.005, 0.5))
     bounds = get_bounds_vector(custom)
-    assert bounds[0] == (0.01, 1.0)
+    assert bounds[0] == (0.005, 0.5)
+
+
+def test_bounds_beta_tightened() -> None:
+    """β default 가 corner 방지용으로 좁혀짐: (0.01, 1.0)."""
+    bounds = get_bounds_vector()
+    for i in range(4):    # beta_h, _w, _s, _o
+        assert bounds[i] == (0.01, 1.0)
+
+
+def test_bounds_phi_tightened() -> None:
+    """φ default: (0.3, 3.0)."""
+    bounds = get_bounds_vector()
+    # phi entries at indices 4..17 (14 entries)
+    for i in range(4, 18):
+        assert bounds[i] == (0.3, 3.0)
+
+
+def test_bounds_gamma_report_tightened() -> None:
+    bounds = get_bounds_vector()
+    assert bounds[18] == (0.05, 0.95)
+
+
+def test_bounds_seasonality_amp_min_not_zero() -> None:
+    bounds = get_bounds_vector()
+    assert bounds[19][0] > 0   # lower > 0 → 시즌성 강제
 
 
 # ---------- initial_guess ----------
@@ -198,7 +223,7 @@ def test_initial_guess_custom_base() -> None:
 
 def test_seasonality_amp_bounds() -> None:
     bounds = get_bounds_vector()
-    assert bounds[19] == (0.0, 3.0)
+    assert bounds[19] == (0.1, 3.0)
 
 
 def test_seasonality_base_bounds() -> None:

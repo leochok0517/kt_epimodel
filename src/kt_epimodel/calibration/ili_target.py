@@ -242,12 +242,16 @@ def poisson_log_likelihood(
     predicted: np.ndarray,
     is_valid: np.ndarray | None = None,
     weights: np.ndarray | None = None,
-    min_rate: float = 1e-6,
+    min_rate: float = 0.1,
 ) -> float:
     """Weighted Poisson NLL = Σ w_i [y_pred − y_obs · log(y_pred)].
 
     Args:
         weights: (n_weeks,) 가중치. None 이면 1.0. weight=0 인 주는 NLL 기여 0.
+        min_rate: predicted 의 lower floor. default 0.1 (ILI per 1000 단위).
+            너무 작으면 (예: 1e-6) optimizer 가 predicted≈0 으로 도주하는 corner
+            solution 발생 — 작은 prediction 도 finite NLL 이라 penalty 약함.
+            0.1 정도면 zero prediction 에 강한 penalty.
     """
     observed = np.asarray(observed, dtype=np.float64)
     predicted = np.asarray(predicted, dtype=np.float64)
