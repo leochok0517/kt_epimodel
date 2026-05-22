@@ -1,18 +1,19 @@
 """ModelParameters ↔ 1D vector 변환 (optimizer 용).
 
-Vector layout (22 elements):
+Vector layout (23 elements):
     [0]  beta_h
     [1]  beta_w
     [2]  beta_s
     [3]  beta_o
-    [4..17]  phi_a (a ∈ {0..14} \ {5})   — phi_5 (25-29) 제외
+    [4..17]  phi_a (a in {0..14} \\ {5})  — phi_5 (25-29) 제외
     [18] gamma_report
     [19] seasonality_amp
     [20] seasonality_base
-    [21] seasonality_sigma   (gaussian σ in days; cosine 모드에선 단순 보존)
+    [21] seasonality_sigma
+    [22] seasonality_peak_day
 
 phi[5] = 1.0 reference.
-seasonality_mode, peak_day, period 는 vector 외 (caller 보존).
+seasonality_mode, period 는 vector 외 (caller 보존).
 """
 
 from __future__ import annotations
@@ -28,14 +29,14 @@ from kt_epimodel.model.parameters import (
 
 N_AGE: int = 15
 REF_AGE_IDX: int = 5
-N_VECTOR: int = 22
+N_VECTOR: int = 23
 
 
 @dataclass
 class ParameterBounds:
     """파라미터별 (lower, upper) 경계.
 
-    Tightened to avoid degenerate corner solutions (β→0, φ→0.1, γ_report→1, amp→0).
+    Tightened to avoid degenerate corner solutions.
     """
     beta_h: tuple[float, float] = (0.01, 1.0)
     beta_w: tuple[float, float] = (0.01, 1.0)
@@ -46,6 +47,7 @@ class ParameterBounds:
     seasonality_amp: tuple[float, float] = (0.1, 3.0)
     seasonality_base: tuple[float, float] = (0.0, 1.0)
     seasonality_sigma: tuple[float, float] = (15.0, 80.0)
+    seasonality_peak_day: tuple[float, float] = (80.0, 150.0)
 
 
 def get_param_names() -> list[str]:
@@ -58,6 +60,7 @@ def get_param_names() -> list[str]:
     names.append("seasonality_amp")
     names.append("seasonality_base")
     names.append("seasonality_sigma")
+    names.append("seasonality_peak_day")
     return names
 
 
@@ -82,13 +85,14 @@ def params_to_vector(
     vec[19] = disease.seasonality_amp
     vec[20] = disease.seasonality_base
     vec[21] = disease.seasonality_sigma
+    vec[22] = disease.seasonality_peak_day
     return vec
 
 
 def vector_to_params(
     vec: np.ndarray,
-) -> tuple[CalibrationParameters, float, float, float]:
-    """(22,) → (CalibrationParameters, amp, base, sigma)."""
+) -> tuple[CalibrationParameters, float, float, float, float]:
+    """(23,) → (CalibrationParameters, amp, base, sigma, peak_day)."""
     if vec.shape != (N_VECTOR,):
         raise ValueError(f"vec shape must be ({N_VECTOR},), got {vec.shape}")
 
@@ -108,7 +112,7 @@ def vector_to_params(
         phi=phi,
         gamma_report=float(vec[18]),
     )
-    return cal, float(vec[19]), float(vec[20]), float(vec[21])
+    return cal, float(vec[19]), float(vec[20]), float(vec[21]), float(vec[22])
 
 
 def get_bounds_vector(
@@ -127,6 +131,7 @@ def get_bounds_vector(
     out.append(bounds.seasonality_amp)
     out.append(bounds.seasonality_base)
     out.append(bounds.seasonality_sigma)
+    out.append(bounds.seasonality_peak_day)
     return out
 
 
@@ -137,7 +142,8 @@ def initial_guess(
     if base_calibration is None:
         base_calibration = CalibrationParameters()
     if base_disease is None:
-        base_disease = DiseaseParameters()
+        # ILI peak ~ week 16-18 day 112-126. peak_day 110 으로 약간 앞당김.
+        base_disease = DiseaseParameters(seasonality_peak_day=110.0)
     return params_to_vector(base_calibration, base_disease)
 
 
@@ -150,12 +156,13 @@ if __name__ == "__main__":
     dis = DiseaseParameters()
     vec = params_to_vector(cal, dis)
     print(f"N_VECTOR: {N_VECTOR}, vec shape: {vec.shape}")
-    print(f"Names (last 4): {get_param_names()[-4:]}")
+    print(f"Names (last 5): {get_param_names()[-5:]}")
     print(f"Vector: {vec}")
 
-    cal2, amp2, base2, sigma2 = vector_to_params(vec)
-    print(f"\nRound-trip phi[5]: {cal2.phi[5]}")
-    print(f"  amp:   {amp2} (expected {dis.seasonality_amp})")
-    print(f"  base:  {base2} (expected {dis.seasonality_base})")
-    print(f"  sigma: {sigma2} (expected {dis.seasonality_sigma})")
+    cal2, amp2, base2, sigma2, peak2 = vector_to_params(vec)
+    print(f"\nRound-trip phi[5]:  {cal2.phi[5]}")
+    print(f"  amp:      {amp2}")
+    print(f"  base:     {base2}")
+    print(f"  sigma:    {sigma2}")
+    print(f"  peak_day: {peak2}")
     print(f"Bounds length: {len(get_bounds_vector())}")

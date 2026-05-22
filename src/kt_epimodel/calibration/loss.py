@@ -63,7 +63,7 @@ def make_loss_function(
     def loss(vec: np.ndarray) -> float:
         call_count[0] += 1
         try:
-            new_cal, new_amp, new_base, new_sigma = vector_to_params(vec)
+            new_cal, new_amp, new_base, new_sigma, new_peak = vector_to_params(vec)
             base_d = base_params.disease
             new_disease = DiseaseParameters(
                 sigma=base_d.sigma,
@@ -72,7 +72,7 @@ def make_loss_function(
                 seasonality_mode=base_d.seasonality_mode,
                 seasonality_amp=new_amp,
                 seasonality_base=new_base,
-                seasonality_peak_day=base_d.seasonality_peak_day,
+                seasonality_peak_day=new_peak,
                 seasonality_period=base_d.seasonality_period,
                 seasonality_sigma=new_sigma,
             )
@@ -104,7 +104,7 @@ def make_loss_function(
                 print(
                     f"[Eval {call_count[0]:>4}] "
                     f"β=({vec[0]:.3f},{vec[1]:.3f},{vec[2]:.3f},{vec[3]:.3f}) "
-                    f"γ_r={vec[18]:.3f} amp={vec[19]:.3f} base={vec[20]:.3f} σ={vec[21]:.1f}  NLL={nll:.2f}"
+                    f"γ_r={vec[18]:.3f} amp={vec[19]:.3f} base={vec[20]:.3f} σ={vec[21]:.1f} pk={vec[22]:.0f}  NLL={nll:.2f}"
                 )
             return float(nll) if np.isfinite(nll) else float(penalty)
 
@@ -148,14 +148,14 @@ def make_loss_function_by_age(
     def loss(vec: np.ndarray) -> float:
         call_count[0] += 1
         try:
-            cal_new, amp_new, base_new, sigma_new = vector_to_params(vec)
+            cal_new, amp_new, base_new, sigma_new, peak_new = vector_to_params(vec)
             base_d = base_params.disease
             new_disease = DiseaseParameters(
                 sigma=base_d.sigma, gamma=base_d.gamma, kappa=base_d.kappa,
                 seasonality_mode=base_d.seasonality_mode,
                 seasonality_amp=amp_new,
                 seasonality_base=base_new,
-                seasonality_peak_day=base_d.seasonality_peak_day,
+                seasonality_peak_day=peak_new,
                 seasonality_period=base_d.seasonality_period,
                 seasonality_sigma=sigma_new,
             )
@@ -203,7 +203,7 @@ def make_loss_function_by_age(
                 print(
                     f"[Eval {call_count[0]:>4}] "
                     f"β=({vec[0]:.3f},{vec[1]:.3f},{vec[2]:.3f},{vec[3]:.3f}) "
-                    f"γ_r={vec[18]:.3f} amp={vec[19]:.3f} base={vec[20]:.3f} σ={vec[21]:.1f}  NLL={total_nll:.2f}"
+                    f"γ_r={vec[18]:.3f} amp={vec[19]:.3f} base={vec[20]:.3f} σ={vec[21]:.1f} pk={vec[22]:.0f}  NLL={total_nll:.2f}"
                 )
             return float(total_nll)
 

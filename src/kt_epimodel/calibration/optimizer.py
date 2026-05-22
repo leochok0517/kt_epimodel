@@ -54,6 +54,7 @@ class CalibrationResult:
     seasonality_amp: float
     seasonality_base: float
     seasonality_sigma: float
+    seasonality_peak_day: float
     seasonality_mode: str
     vector: np.ndarray
     n_evaluations: int
@@ -135,7 +136,7 @@ def optimize_calibration(
         )
     elapsed = time.perf_counter() - t0
 
-    fit_params, fit_amp, fit_base, fit_sigma = vector_to_params(sol.x)
+    fit_params, fit_amp, fit_base, fit_sigma, fit_peak = vector_to_params(sol.x)
 
     if verbose:
         print("\n=== Result ===")
@@ -151,6 +152,7 @@ def optimize_calibration(
         print(f"  amp:          {fit_amp:.4f}")
         print(f"  base:         {fit_base:.4f}")
         print(f"  sigma:        {fit_sigma:.2f}")
+        print(f"  peak_day:     {fit_peak:.1f}")
 
     return CalibrationResult(
         season=season,
@@ -162,6 +164,7 @@ def optimize_calibration(
         seasonality_amp=fit_amp,
         seasonality_base=fit_base,
         seasonality_sigma=fit_sigma,
+        seasonality_peak_day=fit_peak,
         seasonality_mode=base_params.disease.seasonality_mode,
         vector=np.asarray(sol.x, dtype=np.float64),
         n_evaluations=int(sol.nfev),
@@ -267,7 +270,7 @@ def optimize_calibration_by_age(
             },
         )
     elapsed = time.perf_counter() - t0
-    fit_params, fit_amp, fit_base, fit_sigma = vector_to_params(sol.x)
+    fit_params, fit_amp, fit_base, fit_sigma, fit_peak = vector_to_params(sol.x)
 
     if verbose:
         print("\n=== Result (by_age) ===")
@@ -283,6 +286,7 @@ def optimize_calibration_by_age(
         print(f"  amp:          {fit_amp:.4f}")
         print(f"  base:         {fit_base:.4f}")
         print(f"  sigma:        {fit_sigma:.2f}")
+        print(f"  peak_day:     {fit_peak:.1f}")
 
     return CalibrationResult(
         season=f"{season}_by_age",
@@ -294,6 +298,7 @@ def optimize_calibration_by_age(
         seasonality_amp=fit_amp,
         seasonality_base=fit_base,
         seasonality_sigma=fit_sigma,
+        seasonality_peak_day=fit_peak,
         seasonality_mode=base_params.disease.seasonality_mode,
         vector=np.asarray(sol.x, dtype=np.float64),
         n_evaluations=int(sol.nfev),
@@ -335,6 +340,7 @@ def save_result(result: CalibrationResult, path: Path | str) -> None:
         "seasonality_amp": result.seasonality_amp,
         "seasonality_base": result.seasonality_base,
         "seasonality_sigma": result.seasonality_sigma,
+        "seasonality_peak_day": result.seasonality_peak_day,
         "seasonality_mode": result.seasonality_mode,
         "first_peak_only": result.first_peak_only,
         "first_peak_end_week": result.first_peak_end_week,
@@ -376,6 +382,7 @@ def load_result(path: Path | str) -> CalibrationResult:
         seasonality_amp=float(data.get("seasonality_amp", 0.0)),
         seasonality_base=float(data.get("seasonality_base", 1.0)),
         seasonality_sigma=float(data.get("seasonality_sigma", 40.0)),
+        seasonality_peak_day=float(data.get("seasonality_peak_day", 130.0)),
         seasonality_mode=str(data.get("seasonality_mode", "cosine")),
         vector=np.asarray(data["vector"], dtype=np.float64),
         n_evaluations=data["n_evaluations"],
@@ -424,6 +431,7 @@ if __name__ == "__main__":
     print(f"amp:          {result.seasonality_amp:.4f}")
     print(f"base:         {result.seasonality_base:.4f}")
     print(f"sigma:        {result.seasonality_sigma:.2f}")
+    print(f"peak_day:     {result.seasonality_peak_day:.1f}")
     print(f"mode:         {result.seasonality_mode}")
     print(f"φ (15 ages):  {np.array2string(result.calibration.phi, precision=2)}")
 

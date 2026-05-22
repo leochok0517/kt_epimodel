@@ -54,7 +54,7 @@ def test_optimizer_result_has_all_fields() -> None:
     assert isinstance(r.nll, float)
     assert isinstance(r.nll_initial, float)
     assert isinstance(r.calibration, CalibrationParameters)
-    assert r.vector.shape == (22,)
+    assert r.vector.shape == (23,)
     assert isinstance(r.n_evaluations, int)
     assert r.elapsed_seconds > 0
     assert isinstance(r.message, str)
@@ -71,11 +71,12 @@ def test_optimizer_nll_does_not_worsen() -> None:
 
 def test_optimizer_initial_vec_respected() -> None:
     """initial_vec 지정 시 그 값에서 시작."""
-    init = np.full(22, 0.1)
+    init = np.full(23, 0.1)
     init[18] = 0.5    # gamma_report
     init[19] = 0.3    # seasonality_amp
     init[20] = 0.1    # seasonality_base
     init[21] = 40.0   # seasonality_sigma
+    init[22] = 110.0  # seasonality_peak_day
     r = optimize_calibration(
         season="2022-2023", method="Nelder-Mead",
         max_iterations=1, initial_vec=init, verbose=False,
@@ -255,7 +256,7 @@ def test_optimize_by_age_result_shape() -> None:
         season="2022-2023", method="Nelder-Mead",
         max_iterations=2, verbose=False,
     )
-    assert r.vector.shape == (22,)
+    assert r.vector.shape == (23,)
     assert r.first_peak_only is True       # default for by_age
 
 
