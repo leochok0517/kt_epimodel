@@ -70,6 +70,38 @@ class CalibrationResult:
     gamma_report_assumed: float = 1.0
 
 
+def _resolve_initial_vec(
+    initial_vec: np.ndarray | None,
+    initial_from_result: "CalibrationResult | None",
+) -> np.ndarray:
+    """Initial vec 결정 — 명시 vec > warm-start result > default initial_guess().
+
+    ``initial_from_result`` 가 주어지면 그 ``.vector`` 를 현재 bounds 안으로 clip
+    해서 반환한다 (옛 fit 의 bounds 가 현재와 다를 수 있어 안전 처리).
+    """
+    if initial_vec is not None and initial_from_result is not None:
+        raise ValueError(
+            "Pass at most one of initial_vec / initial_from_result, not both."
+        )
+    if initial_from_result is not None:
+        vec = np.asarray(initial_from_result.vector, dtype=np.float64).copy()
+        bounds = get_bounds_vector()
+        if vec.shape != (len(bounds),):
+            raise ValueError(
+                f"initial_from_result.vector has shape {vec.shape}; "
+                f"expected ({len(bounds)},)"
+            )
+        for i, (lo, hi) in enumerate(bounds):
+            if vec[i] < lo:
+                vec[i] = lo
+            elif vec[i] > hi:
+                vec[i] = hi
+        return vec
+    if initial_vec is not None:
+        return np.asarray(initial_vec, dtype=np.float64)
+    return initial_guess()
+
+
 def optimize_calibration(
     season: str,
     base_params: ModelParameters | None = None,
@@ -78,13 +110,19 @@ def optimize_calibration(
     initial_vaccinated_fraction: float = 0.0,
     method: str = "Nelder-Mead",
     initial_vec: np.ndarray | None = None,
+    initial_from_result: "CalibrationResult | None" = None,
     max_iterations: int = 2000,
     verbose: bool = True,
     t_span: tuple[float, float] = (0.0, 364.0),
     first_peak_only: bool = False,
     first_peak_end_week: int = 26,
 ) -> CalibrationResult:
-    """한 시즌 calibration 수행."""
+    """한 시즌 calibration 수행.
+
+    Warm start:
+      ``initial_from_result`` 로 이전 fit 결과를 넘기면 그 vector 에서 시작.
+      ``initial_vec`` 와 동시 지정 불가.
+    """
     if method not in VALID_METHODS:
         raise ValueError(f"method must be in {VALID_METHODS}, got {method!r}")
     if base_params is None:
@@ -106,8 +144,7 @@ def optimize_calibration(
         verbose=verbose,
     )
 
-    if initial_vec is None:
-        initial_vec = initial_guess()
+    initial_vec = _resolve_initial_vec(initial_vec, initial_from_result)
     nll_initial = float(loss_fn(initial_vec))
 
     if verbose:
@@ -189,6 +226,7 @@ def optimize_calibration_by_age(
     initial_vaccinated_fraction: float = 0.0,
     method: str = "Nelder-Mead",
     initial_vec: np.ndarray | None = None,
+    initial_from_result: "CalibrationResult | None" = None,
     max_iterations: int = 2000,
     verbose: bool = True,
     t_span: tuple[float, float] = (0.0, 364.0),
@@ -242,8 +280,7 @@ def optimize_calibration_by_age(
         verbose=verbose,
     )
 
-    if initial_vec is None:
-        initial_vec = initial_guess()
+    initial_vec = _resolve_initial_vec(initial_vec, initial_from_result)
     nll_initial = float(loss_fn(initial_vec))
 
     if verbose:

@@ -85,6 +85,91 @@ def test_optimizer_initial_vec_respected() -> None:
     assert abs(r.nll_initial) > 0   # 그냥 정상 진행 확인
 
 
+# ---------- initial_from_result (warm start) ----------
+
+def test_optimize_initial_from_result_warm_start() -> None:
+    """initial_from_result 로 넘긴 result 의 vector 가 nll_initial 평가에 쓰임."""
+    seed = optimize_calibration(
+        season="2022-2023", method="Nelder-Mead",
+        max_iterations=5, verbose=False,
+    )
+    chained = optimize_calibration(
+        season="2022-2023", method="Nelder-Mead",
+        max_iterations=1, verbose=False,
+        initial_from_result=seed,
+    )
+    # 새 run 의 nll_initial 은 seed.nll (=seed result 의 final NLL)
+    # 인데 동일 vec 평가 → 같아야 함
+    assert abs(chained.nll_initial - seed.nll) < 1e-3, (
+        f"nll_initial {chained.nll_initial} != seed.nll {seed.nll}"
+    )
+
+
+def test_optimize_initial_from_result_clipped_to_bounds() -> None:
+    """warm-start vector 가 현재 bounds 밖이면 clip."""
+    from kt_epimodel.calibration.optimizer import _resolve_initial_vec
+    from kt_epimodel.calibration.param_vector import get_bounds_vector
+
+    seed = optimize_calibration(
+        season="2022-2023", method="Nelder-Mead",
+        max_iterations=1, verbose=False,
+    )
+    bounds = get_bounds_vector()
+    # vec[0] (beta_h) 를 lower bound 아래로 깎음
+    bad_vec = seed.vector.copy()
+    lo0, hi0 = bounds[0]
+    bad_vec[0] = lo0 - 1.0     # out of range
+    bad_vec[18] = hi0 + 10.0   # gamma_report 도 over
+    seed_bad = CalibrationResult(
+        season=seed.season, method=seed.method, success=seed.success,
+        nll=seed.nll, nll_initial=seed.nll_initial,
+        calibration=seed.calibration,
+        seasonality_amp=seed.seasonality_amp, seasonality_base=seed.seasonality_base,
+        seasonality_sigma=seed.seasonality_sigma, seasonality_peak_day=seed.seasonality_peak_day,
+        seasonality_mode=seed.seasonality_mode,
+        vector=bad_vec,
+        n_evaluations=seed.n_evaluations, elapsed_seconds=seed.elapsed_seconds,
+        message=seed.message, seed_total=seed.seed_total,
+        initial_immunity=seed.initial_immunity,
+        initial_vaccinated_fraction=seed.initial_vaccinated_fraction,
+    )
+    resolved = _resolve_initial_vec(None, seed_bad)
+    for i, (lo, hi) in enumerate(bounds):
+        assert lo <= resolved[i] <= hi, (
+            f"vec[{i}] = {resolved[i]} outside ({lo}, {hi})"
+        )
+
+
+def test_optimize_initial_vec_and_result_conflict() -> None:
+    """initial_vec 과 initial_from_result 동시 지정 시 ValueError."""
+    seed = optimize_calibration(
+        season="2022-2023", method="Nelder-Mead",
+        max_iterations=1, verbose=False,
+    )
+    with pytest.raises(ValueError):
+        optimize_calibration(
+            season="2022-2023", method="Nelder-Mead",
+            max_iterations=1, verbose=False,
+            initial_vec=np.full(23, 0.1),
+            initial_from_result=seed,
+        )
+
+
+def test_optimize_by_age_initial_from_result_warm_start() -> None:
+    """by_age 경로도 warm start 동작."""
+    seed = optimize_calibration_by_age(
+        season="2022-2023", method="L-BFGS-B",
+        max_iterations=3, verbose=False,
+    )
+    chained = optimize_calibration_by_age(
+        season="2022-2023", method="Nelder-Mead",
+        max_iterations=1, verbose=False,
+        initial_from_result=seed,
+    )
+    # 동일 vec → 동일 NLL
+    assert abs(chained.nll_initial - seed.nll) < 1e-3
+
+
 # ---------- save / load ----------
 
 def test_save_load_roundtrip(tmp_path: Path) -> None:
