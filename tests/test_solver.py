@@ -183,6 +183,62 @@ def test_daily_new_infection_shape() -> None:
     assert (inc >= -1e-3).all()
 
 
+def test_daily_new_infection_by_age_shape() -> None:
+    s = _setup()
+    r = run_simulation(s["state"], s["mobility"], s["matrices"], s["pop"], s["params"], t_span=(0, 10))
+    inc = r.daily_new_infection_by_age()
+    assert inc.shape == (len(r.t) - 1, N_AGE)
+    assert (inc >= -1e-3).all()
+
+
+def test_daily_new_infection_by_age_excludes_vax_flux() -> None:
+    """vaccination 이 큰 시뮬에서: -ΔS ≫ daily_new_infection_by_age.
+
+    백신 흐름 S→V 가 -ΔS 에는 포함되지만 daily_new_infection_by_age 에는 빠짐.
+    """
+    s = _setup(beta=0.001, VE=0.9)   # β 작아 transmission 약함
+    # 높은 annual_coverage 로 vax flux 강제
+    vax = VaccinationParameters(
+        VE=0.9,
+        annual_coverage=np.full(N_AGE, 0.8),
+        peak_iso_week=38,  # 시즌 초입
+        spread_weeks=4.0,
+    )
+    base = s["params"]
+    params = ModelParameters(
+        disease=base.disease,
+        calibration=base.calibration,
+        vaccination=vax,
+        employment=base.employment,
+    )
+    r = run_simulation(s["state"], s["mobility"], s["matrices"], s["pop"], params, t_span=(0, 30))
+    assert r.success
+
+    S_total = r.states[:, IDX_S].sum(axis=(1, 2))
+    V_total = r.states[:, IDX_V].sum(axis=(1, 2))
+    delta_S = float(S_total[0] - S_total[-1])
+    delta_V = float(V_total[-1] - V_total[0])
+
+    inc_by_age = r.daily_new_infection_by_age()
+    inc_total = float(inc_by_age.sum())
+
+    # vax flux 가 매우 큼 (의도된 시나리오)
+    assert delta_V > 1.0
+    # daily_new_infection_by_age 은 vax 흐름을 포함하지 않음
+    assert inc_total < delta_S
+    # 인구 보존: ΔS ≈ ΔV + (E+I+R 증분); 마지막은 곧 daily_new_infection 합
+    assert abs((delta_S - delta_V) - inc_total) < max(1.0, 0.001 * delta_S)
+
+
+def test_daily_new_infection_by_age_matches_aggregate() -> None:
+    """연령 합 = aggregate daily_new_infection."""
+    s = _setup()
+    r = run_simulation(s["state"], s["mobility"], s["matrices"], s["pop"], s["params"], t_span=(0, 30))
+    inc_total = r.daily_new_infection()
+    inc_by_age = r.daily_new_infection_by_age()
+    np.testing.assert_allclose(inc_by_age.sum(axis=1), inc_total, rtol=1e-10)
+
+
 def test_vaccinated_count_shape() -> None:
     s = _setup()
     r = run_simulation(s["state"], s["mobility"], s["matrices"], s["pop"], s["params"], t_span=(0, 10))

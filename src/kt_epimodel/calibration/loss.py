@@ -17,7 +17,6 @@ from kt_epimodel.calibration.ili_target import (
 )
 from kt_epimodel.calibration.param_vector import vector_to_params
 from kt_epimodel.calibration.simple_model import simulate_aggregated
-from kt_epimodel.model.compartments import IDX_S
 from kt_epimodel.model.parameters import DiseaseParameters, ModelParameters
 
 
@@ -177,10 +176,9 @@ def make_loss_function_by_age(
                     print(f"[Eval {call_count[0]}] solver failed: {result.message}")
                 return float(penalty)
 
-            # 연령별 일일 신규감염 — S compartment 의 일일 감소량 (−ΔS)
+            # 연령별 일일 신규감염 — Δ(E + I + R) per age (백신 흐름 S→V 제외).
             # state shape: (n_t, 5, 15, n_admdong=1)
-            S_age = result.states[:, IDX_S, :, :].sum(axis=-1)   # (n_t, 15)
-            daily_inc_by_age = -np.diff(S_age, axis=0)           # (n_t-1, 15)
+            daily_inc_by_age = result.daily_new_infection_by_age()  # (n_t-1, 15)
 
             predictions = simulation_to_ili_by_age(
                 daily_inc_by_age, pop_15_flat,

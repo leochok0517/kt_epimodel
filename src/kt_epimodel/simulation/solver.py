@@ -71,6 +71,16 @@ class SimulationResult:
         R = self.states[:, IDX_R].sum(axis=(1, 2))
         return np.diff(E + I + R)
 
+    def daily_new_infection_by_age(self) -> np.ndarray:
+        """일일 신규 감염 — 연령별 (15군). (n_t-1, 15).
+
+        동일 원리: Δ(E + I + R) per age group. 백신 흐름(S→V) 제외.
+        """
+        E = self.states[:, IDX_E, :, :].sum(axis=-1)   # (n_t, 15)
+        I = self.states[:, IDX_I, :, :].sum(axis=-1)
+        R = self.states[:, IDX_R, :, :].sum(axis=-1)
+        return np.diff(E + I + R, axis=0)
+
     # --- vaccination ---
     def vaccinated_count(self) -> np.ndarray:
         """V compartment 시계열. (n_t, 15, n_admdong)."""

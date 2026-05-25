@@ -140,6 +140,40 @@ def test_loss_by_age_invalid_vec_returns_penalty() -> None:
     assert loss(bad) == 999.9
 
 
+def test_loss_by_age_excludes_vax_flux() -> None:
+    """by_age loss 가 -ΔS 가 아닌 Δ(E+I+R) 을 사용 → vax flux 영향 없음.
+
+    같은 모델 / 같은 vec 로 두 시나리오를 평가:
+      (a) initial_vaccinated_fraction = 0
+      (b) initial_vaccinated_fraction = 0.3 (V 가 이미 채워져 있음)
+    vax flux 는 거의 같아도 NLL 차이가 작아야 함 (transmission 동학만 차이).
+    -ΔS 를 그대로 썼다면 (a)와 (b) 의 daily_inc 가 wildly 다름.
+    """
+    from kt_epimodel.calibration.ili_target import load_ili_target_by_age
+    from kt_epimodel.calibration.loss import make_loss_function_by_age
+    s = _setup()
+    target_age = load_ili_target_by_age("2022-2023", first_peak_only=True)
+
+    loss_a = make_loss_function_by_age(
+        target_age, s["inputs"], ModelParameters(),
+        initial_vaccinated_fraction=0.0, t_span=(0.0, 60.0),
+    )
+    loss_b = make_loss_function_by_age(
+        target_age, s["inputs"], ModelParameters(),
+        initial_vaccinated_fraction=0.3, t_span=(0.0, 60.0),
+    )
+
+    vec = initial_guess()
+    v_a = loss_a(vec)
+    v_b = loss_b(vec)
+    assert np.isfinite(v_a)
+    assert np.isfinite(v_b)
+    # vax flux 가 daily_inc 에 들어갔다면 두 NLL 이 크게 달라짐.
+    # transmission 만 본다면 차이 작음 (10% 이내).
+    rel = abs(v_a - v_b) / max(abs(v_a), 1.0)
+    assert rel < 0.10, f"NLL diff too large: {v_a:.1f} vs {v_b:.1f} (rel={rel:.3f})"
+
+
 def test_loss_uses_target_weights() -> None:
     """first_peak_only target → 후반부 NLL 기여 제외."""
     s = _setup()
