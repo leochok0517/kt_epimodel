@@ -231,7 +231,7 @@ if __name__ == "__main__":
 
     vec = initial_guess()
     nll = loss_fn(vec)
-    print(f"\nInitial NLL (default β=0.05): {nll:.2f}")
+    print(f"\nInitial NLL (default β=0.3): {nll:.2f}")
 
     vec2 = vec.copy()
     vec2[0:4] *= 2.0

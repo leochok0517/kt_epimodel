@@ -186,11 +186,41 @@ def test_disease_invalid_period_raises() -> None:
 # ---------- CalibrationParameters ----------
 
 def test_calibration_4_betas_default() -> None:
+    """β default = 0.3 (epidemic 영역, R₀ ≈ 1.5)."""
     c = CalibrationParameters()
-    assert c.beta_h == 0.05
-    assert c.beta_w == 0.05
-    assert c.beta_s == 0.05
-    assert c.beta_o == 0.05
+    assert c.beta_h == 0.3
+    assert c.beta_w == 0.3
+    assert c.beta_s == 0.3
+    assert c.beta_o == 0.3
+
+
+def test_calibration_default_beta_in_epidemic_range() -> None:
+    """Default β 로 시뮬 → epidemic 발생 (vax flux 제외 신규감염 합 > seed).
+
+    이전 default β=0.05 는 R₀<1 dead zone 이라 L-BFGS-B gradient flat → 즉시 종료.
+    β=0.3 으로 올린 뒤 epidemic 이 실제로 진행되는지 검증.
+    """
+    from kt_epimodel.calibration.simple_model import (
+        build_aggregated_inputs,
+        estimate_initial_infected_from_ili,
+        simulate_aggregated,
+    )
+    from kt_epimodel.model.parameters import ModelParameters
+
+    inputs = build_aggregated_inputs()
+    pop_15 = inputs["pop_15"].flatten()
+    seed_by_age = estimate_initial_infected_from_ili(
+        "2019-2020", pop_15, gamma_report_assumed=200.0,
+    )
+    sim = simulate_aggregated(
+        ModelParameters(), inputs,
+        seed_total=0.0, seed_by_age=seed_by_age, seed_e_factor=0.5,
+        initial_immunity=0.3, t_span=(0.0, 200.0),
+    )
+    total_new = float(sim.daily_new_infection_by_age().sum())
+    assert total_new > seed_by_age.sum() * 2.0, (
+        f"epidemic 미발생: new={total_new:.0f}, seed={seed_by_age.sum():.0f}"
+    )
 
 
 def test_calibration_betas_dict() -> None:

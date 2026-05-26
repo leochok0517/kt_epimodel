@@ -132,11 +132,15 @@ class CalibrationParameters:
 
     β_h, β_w, β_s, β_o: home, work, school, other 채널의 transmission rate.
     Calibration 에서 fit 대상.
+
+    β default = 0.3:
+      - 0.05 는 R₀ < 1 dead zone (vax flux 버그 수정 후 loss 가 flat → L-BFGS-B 즉시 종료)
+      - 0.3 은 적절한 epidemic 영역 (R₀ ≈ 1.5) — gradient 가 의미 있게 잡힘
     """
-    beta_h: float = 0.05
-    beta_w: float = 0.05
-    beta_s: float = 0.05
-    beta_o: float = 0.05
+    beta_h: float = 0.3
+    beta_w: float = 0.3
+    beta_s: float = 0.3
+    beta_o: float = 0.3
     phi: np.ndarray = field(default_factory=lambda: np.ones(N_AGE))
     gamma_report: float = 0.5
 
